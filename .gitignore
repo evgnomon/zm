@@ -1,0 +1,18 @@
+# Zig build artifacts
+zig-cache/
+zig-out/
+.zig-cache
+
+# Executables
+*.exe
+
+# Debug files
+*.pdb
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
