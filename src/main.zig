@@ -7,6 +7,7 @@ const Io = std.Io;
 const c = @cImport({
     @cInclude("libvirt/libvirt.h");
     @cInclude("libvirt/virterror.h");
+    @cInclude("iso.h");
 });
 
 // Custom error handler that suppresses errors
@@ -31,12 +32,12 @@ pub fn main() !void {
 
     const domain_name = args[1];
 
-    const src_image = "/usr/share/mkvm/images/zamin";
+    const src_image = "/usr/share/zm/images/zamin";
 
     const dst_image = try std.fmt.allocPrint(allocator, "/var/lib/libvirt/images/{s}.qcow2", .{domain_name});
     defer allocator.free(dst_image);
 
-    const cloud_init_yaml_template = try std.fmt.allocPrint(allocator, "{s}/cloud-init-user-data.yaml", .{"/usr/share/mkvm/images/cloud-init"});
+    const cloud_init_yaml_template = try std.fmt.allocPrint(allocator, "{s}/cloud-init-user-data.yaml", .{"/usr/share/zm/images/cloud-init"});
     defer allocator.free(cloud_init_yaml_template);
 
     const cloud_init_yaml = try std.fmt.allocPrint(allocator, "/tmp/{s}-user-data", .{domain_name});
@@ -91,28 +92,30 @@ pub fn main() !void {
         }
     };
 
-    // Create ISO with user-data and meta-data
-    const iso_cmd = try std.fmt.allocPrint(allocator, "genisoimage -output {s} -volid cidata -joliet -rock -graft-points user-data={s} meta-data={s}", .{ cloud_init_iso, cloud_init_yaml, meta_data });
-    defer allocator.free(iso_cmd);
+    // Create ISO with user-data and meta-data via C function (libisofs/libisoburn)
+    var c_iso = try allocator.alloc(u8, cloud_init_iso.len + 1);
+    defer allocator.free(c_iso);
+    @memcpy(c_iso[0..cloud_init_iso.len], cloud_init_iso);
+    c_iso[cloud_init_iso.len] = 0;
 
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{ "sh", "-c", iso_cmd },
-    });
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
+    var c_ud = try allocator.alloc(u8, cloud_init_yaml.len + 1);
+    defer allocator.free(c_ud);
+    @memcpy(c_ud[0..cloud_init_yaml.len], cloud_init_yaml);
+    c_ud[cloud_init_yaml.len] = 0;
 
-    switch (result.term) {
-        .Exited => |code| {
-            if (code != 0) {
-                std.log.err("Failed to create cloud-init ISO: {s}", .{result.stderr});
-                return error.IsoCreationFailed;
-            }
-        },
-        else => {
-            std.log.err("Failed to create cloud-init ISO: {s}", .{result.stderr});
-            return error.IsoCreationFailed;
-        },
+    var c_md = try allocator.alloc(u8, meta_data.len + 1);
+    defer allocator.free(c_md);
+    @memcpy(c_md[0..meta_data.len], meta_data);
+    c_md[meta_data.len] = 0;
+
+    const rc = c.zm_geniso(
+        @as([*c]const u8, @ptrCast(c_iso.ptr)),
+        @as([*c]const u8, @ptrCast(c_ud.ptr)),
+        @as([*c]const u8, @ptrCast(c_md.ptr)),
+    );
+    if (rc != 0) {
+        std.log.err("Failed to create cloud-init ISO: exit code {d}", .{rc});
+        return error.IsoCreationFailed;
     }
 
     // 1. Copy the source image
