@@ -1,3 +1,12 @@
+```
+  ________ __  __
+ |___  /  |  \/  |
+    / /   | |\/| |
+   / /__  | |  | |
+  /_____|_|_|  |_|
+
+```
+
 # zm
 
 A lightweight KVM/QEMU virtual machine creation tool written in Zig.
