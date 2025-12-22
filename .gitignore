@@ -17,3 +17,5 @@ zig-out/
 .DS_Store
 Thumbs.db
 /dist
+node_modules
+.wrangler
