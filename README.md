@@ -13,7 +13,7 @@ Creates a new VM from a base image with automatic cloud-init configuration and d
 ## Build
 
 ```bash
-zig build
+zig build -Doptimize=ReleaseSafe
 ```
 
 ## License
