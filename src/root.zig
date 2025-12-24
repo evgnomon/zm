@@ -1,23 +1,29 @@
 //! By convention, root.zig is the root source file when making a library.
+//! zm - A lightweight KVM/QEMU virtual machine creation tool
+
 const std = @import("std");
 
-pub fn bufferedPrint() !void {
-    // Stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+// Public API exports
+pub const config = @import("config.zig");
+pub const vm = @import("vm.zig");
+pub const cloudinit = @import("cloudinit.zig");
+pub const libvirt = @import("libvirt.zig");
+pub const network = @import("network.zig");
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+// Version information
+pub const version = "0.2.0";
 
-    try stdout.flush(); // Don't forget to flush!
-}
+// Re-export commonly used types and functions
+pub const Config = config.Config;
+pub const VMSpecs = vm.VMSpecs;
+pub const Connection = libvirt.Connection;
+pub const Domain = libvirt.Domain;
 
-pub fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-test "basic add functionality" {
-    try std.testing.expect(add(3, 7) == 10);
-}
+// Convenience functions
+pub const createVM = vm.createVM;
+pub const deleteVM = vm.deleteVM;
+pub const startVM = vm.startVM;
+pub const stopVM = vm.stopVM;
+pub const listVMs = vm.listVMs;
+pub const showVMInfo = vm.showVMInfo;
+pub const getVMIP = vm.getVMIP;
