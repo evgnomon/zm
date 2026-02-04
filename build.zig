@@ -40,6 +40,7 @@ pub fn build(b: *std.Build) void {
         // which requires us to specify a target.
         .target = target,
     });
+    mod.link_libc = true;
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -83,13 +84,13 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    exe.linkLibC();
-    exe.linkSystemLibrary("virt");
+    exe.root_module.link_libc = true;
+    exe.root_module.linkSystemLibrary("virt", .{});
     exe.root_module.addIncludePath(b.path("src"));
     exe.root_module.addCSourceFile(.{ .file = b.path("src/iso.c"), .flags = &.{} });
-    exe.linkSystemLibrary("isoburn");
-    exe.linkSystemLibrary("isofs");
-    exe.linkSystemLibrary("burn");
+    exe.root_module.linkSystemLibrary("isoburn", .{});
+    exe.root_module.linkSystemLibrary("isofs", .{});
+    exe.root_module.linkSystemLibrary("burn", .{});
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
