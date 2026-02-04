@@ -11,21 +11,22 @@ pub const CloudInitError = error{
 };
 
 pub fn createCloudInitISO(
+    io: std.Io,
     allocator: std.mem.Allocator,
     domain_name: []const u8,
     template_path: []const u8,
     output_iso_path: []const u8,
 ) !void {
     // Read the template user-data file
-    const template_content = try std.fs.cwd().readFileAlloc(template_path, allocator, .unlimited);
+    const template_content = try std.Io.Dir.cwd().readFileAlloc(io, template_path, allocator, .unlimited);
     defer allocator.free(template_content);
 
     // Create user-data with machine-id regeneration commands
     const user_data_path = try std.fmt.allocPrint(allocator, "/tmp/{s}-user-data", .{domain_name});
     defer allocator.free(user_data_path);
 
-    const user_data_file = try std.fs.cwd().createFile(user_data_path, .{});
-    defer user_data_file.close();
+    const user_data_file = try std.Io.Dir.cwd().createFile(io, user_data_path, .{});
+    defer user_data_file.close(io);
 
     // Combine template with bootcmd to regenerate machine-id
     const user_data_content = try std.fmt.allocPrint(allocator,
@@ -37,7 +38,7 @@ pub fn createCloudInitISO(
     , .{template_content});
     defer allocator.free(user_data_content);
 
-    try user_data_file.writeAll(user_data_content);
+    try user_data_file.writeStreamingAll(io, user_data_content);
 
     // Create meta-data file
     const meta_data_path = try std.fmt.allocPrint(allocator, "/tmp/{s}-meta-data", .{domain_name});
@@ -48,15 +49,15 @@ pub fn createCloudInitISO(
     hasher.update(domain_name);
     const hash = hasher.final();
 
-    const meta_file = try std.fs.cwd().createFile(meta_data_path, .{});
-    defer meta_file.close();
+    const meta_file = try std.Io.Dir.cwd().createFile(io, meta_data_path, .{});
+    defer meta_file.close(io);
 
     const meta_content = try std.fmt.allocPrint(allocator, "instance-id: {s}-{x}\nlocal-hostname: {s}\n", .{ domain_name, hash, domain_name });
     defer allocator.free(meta_content);
-    try meta_file.writeAll(meta_content);
+    try meta_file.writeStreamingAll(io, meta_content);
 
     // Delete existing ISO if it exists
-    std.fs.cwd().deleteFile(output_iso_path) catch |err| {
+    std.Io.Dir.cwd().deleteFile(io, output_iso_path) catch |err| {
         if (err != error.FileNotFound) {
             std.log.warn("Could not delete old ISO: {}", .{err});
         }
@@ -66,10 +67,10 @@ pub fn createCloudInitISO(
     try createISO(allocator, output_iso_path, user_data_path, meta_data_path);
 
     // Clean up temporary files
-    std.fs.cwd().deleteFile(user_data_path) catch |err| {
+    std.Io.Dir.cwd().deleteFile(io, user_data_path) catch |err| {
         std.log.warn("Could not delete user-data temp file: {}", .{err});
     };
-    std.fs.cwd().deleteFile(meta_data_path) catch |err| {
+    std.Io.Dir.cwd().deleteFile(io, meta_data_path) catch |err| {
         std.log.warn("Could not delete meta-data temp file: {}", .{err});
     };
 }
