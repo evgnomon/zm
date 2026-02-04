@@ -9,10 +9,11 @@ on:
   delete:
     branches:
       - '*'
-      - '!main'
+
 
 jobs:
   yacht:
+    if: ${{ github.event.ref_type != 'branch' || github.event.ref != 'main' }}
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/evgnomon/barge:main
