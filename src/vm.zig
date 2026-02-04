@@ -26,6 +26,7 @@ pub const VMError = error{
 };
 
 pub fn createVM(
+    io: std.Io,
     allocator: std.mem.Allocator,
     conn: *const libvirt.Connection,
     cfg: *const config.Config,
@@ -48,14 +49,14 @@ pub fn createVM(
 
     // 1. Copy the source image
     std.log.info("Copying image {s} -> {s}", .{ src_image, dst_image });
-    try fs.cwd().copyFile(src_image, fs.cwd(), dst_image, .{});
+    try std.Io.Dir.cwd().copyFile(src_image, std.Io.Dir.cwd(), dst_image, io, .{});
 
     // 2. Fix ownership and permissions
-    const stat = try fs.cwd().statFile(dst_image);
-    if (stat.mode & 0o666 != 0o660) {
-        const file = try fs.cwd().openFile(dst_image, .{});
-        defer file.close();
-        try file.chmod(0o660);
+    const stat = try std.Io.Dir.cwd().statFile(io, dst_image, .{});
+    if (stat.permissions.toMode() & 0o666 != 0o660) {
+        const file = try std.Io.Dir.cwd().openFile(io, dst_image, .{});
+        defer file.close(io);
+        try file.setPermissions(io, .default_file);
     }
 
     // 3. Create cloud-init ISO
@@ -66,7 +67,7 @@ pub fn createVM(
     defer allocator.free(cloud_init_iso);
 
     std.log.info("Creating cloud-init ISO at {s}", .{cloud_init_iso});
-    try cloudinit.createCloudInitISO(allocator, domain_name, cloud_init_template, cloud_init_iso);
+    try cloudinit.createCloudInitISO(io, allocator, domain_name, cloud_init_template, cloud_init_iso);
 
     // 4. Generate MAC address
     const mac_addr = network.generateMACAddress(domain_name);
@@ -101,6 +102,7 @@ pub fn createVM(
 }
 
 pub fn deleteVM(
+    io: std.Io,
     allocator: std.mem.Allocator,
     conn: *const libvirt.Connection,
     cfg: *const config.Config,
@@ -129,7 +131,7 @@ pub fn deleteVM(
     const disk_path = try std.fmt.allocPrint(allocator, "{s}/{s}.qcow2", .{ cfg.vm_storage_path, domain_name });
     defer allocator.free(disk_path);
 
-    fs.cwd().deleteFile(disk_path) catch |err| {
+    std.Io.Dir.cwd().deleteFile(io, disk_path) catch |err| {
         if (err != error.FileNotFound) {
             std.log.warn("Could not delete disk image: {}", .{err});
         }
@@ -139,6 +141,7 @@ pub fn deleteVM(
 }
 
 pub fn startVM(
+    _: std.Io,
     allocator: std.mem.Allocator,
     conn: *const libvirt.Connection,
     domain_name: []const u8,
@@ -209,6 +212,7 @@ pub fn getVMIP(
 }
 
 pub fn listVMs(
+    _: std.Io,
     allocator: std.mem.Allocator,
     conn: *const libvirt.Connection,
 ) !void {
@@ -230,6 +234,7 @@ pub fn listVMs(
 }
 
 pub fn showVMInfo(
+    _: std.Io,
     alloc: std.mem.Allocator,
     conn: *const libvirt.Connection,
     domain_name: []const u8,

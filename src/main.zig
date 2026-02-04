@@ -5,13 +5,14 @@ const libvirt = @import("libvirt.zig");
 
 const version = "0.2.0";
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const argv = init.minimal.args;
+    const args = try argv.toSlice(allocator);
+    defer allocator.free(args);
 
     if (args.len < 2) {
         try printUsage(args[0]);
@@ -28,9 +29,11 @@ pub fn main() !void {
         return;
     }
 
+    const io = init.io;
+
     // Load configuration
     var cfg = config.Config.init();
-    _ = cfg.loadFromFile(allocator, "/etc/zm/config") catch |err| {
+    _ = cfg.loadFromFile(io, allocator, "/etc/zm/config") catch |err| {
         if (err != error.FileNotFound) {
             std.log.warn("Could not load config: {}", .{err});
         }
@@ -47,23 +50,23 @@ pub fn main() !void {
     const command = args[1];
 
     if (std.mem.eql(u8, command, "create")) {
-        try cmdCreate(allocator, args[2..], &conn, &cfg);
+        try cmdCreate(io, allocator, args[2..], &conn, &cfg);
     } else if (std.mem.eql(u8, command, "list")) {
-        try vm.listVMs(allocator, &conn);
+        try vm.listVMs(io, allocator, &conn);
     } else if (std.mem.eql(u8, command, "info")) {
-        try cmdInfo(allocator, args[2..], &conn);
+        try cmdInfo(io, allocator, args[2..], &conn);
     } else if (std.mem.eql(u8, command, "start")) {
-        try cmdStart(allocator, args[2..], &conn);
+        try cmdStart(io, allocator, args[2..], &conn);
     } else if (std.mem.eql(u8, command, "stop")) {
         try cmdStop(allocator, args[2..], &conn);
     } else if (std.mem.eql(u8, command, "delete")) {
-        try cmdDelete(allocator, args[2..], &conn, &cfg);
+        try cmdDelete(io, allocator, args[2..], &conn, &cfg);
     } else if (std.mem.eql(u8, command, "ip")) {
         try cmdIP(allocator, args[2..], &conn, &cfg);
     } else {
         // Legacy mode: treat as create command
         if (args.len >= 2) {
-            try cmdCreate(allocator, args[1..], &conn, &cfg);
+            try cmdCreate(io, allocator, args[1..], &conn, &cfg);
         } else {
             try printUsage(args[0]);
             std.process.exit(1);
@@ -128,7 +131,7 @@ fn printVersion() !void {
     std.debug.print("zm version {s}\n", .{version});
 }
 
-fn cmdCreate(allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection, cfg: *const config.Config) !void {
+fn cmdCreate(io: std.Io, allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection, cfg: *const config.Config) !void {
     if (args.len == 0) {
         std.log.err("Error: domain name required", .{});
         std.log.err("Usage: zm create <name> [options]", .{});
@@ -187,7 +190,7 @@ fn cmdCreate(allocator: std.mem.Allocator, args: []const []const u8, conn: *cons
         }
     }
 
-    try vm.createVM(allocator, conn, cfg, domain_name, specs);
+    try vm.createVM(io, allocator, conn, cfg, domain_name, specs);
 }
 
 fn parseMemory(value: []const u8) !u64 {
@@ -211,24 +214,24 @@ fn parseMemory(value: []const u8) !u64 {
     return std.fmt.parseInt(u64, value, 10);
 }
 
-fn cmdInfo(allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection) !void {
+fn cmdInfo(io: std.Io, allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection) !void {
     if (args.len == 0) {
         std.log.err("Error: domain name required", .{});
         std.log.err("Usage: zm info <name>", .{});
         std.process.exit(1);
     }
 
-    try vm.showVMInfo(allocator, conn, args[0]);
+    try vm.showVMInfo(io, allocator, conn, args[0]);
 }
 
-fn cmdStart(allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection) !void {
+fn cmdStart(io: std.Io, allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection) !void {
     if (args.len == 0) {
         std.log.err("Error: domain name required", .{});
         std.log.err("Usage: zm start <name>", .{});
         std.process.exit(1);
     }
 
-    try vm.startVM(allocator, conn, args[0]);
+    try vm.startVM(io, allocator, conn, args[0]);
 }
 
 fn cmdStop(allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection) !void {
@@ -253,7 +256,7 @@ fn cmdStop(allocator: std.mem.Allocator, args: []const []const u8, conn: *const 
     try vm.stopVM(allocator, conn, args[0], force);
 }
 
-fn cmdDelete(allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection, cfg: *const config.Config) !void {
+fn cmdDelete(io: std.Io, allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection, cfg: *const config.Config) !void {
     if (args.len == 0) {
         std.log.err("Error: domain name required", .{});
         std.log.err("Usage: zm delete <name> [--force]", .{});
@@ -272,7 +275,7 @@ fn cmdDelete(allocator: std.mem.Allocator, args: []const []const u8, conn: *cons
         }
     }
 
-    try vm.deleteVM(allocator, conn, cfg, args[0], force);
+    try vm.deleteVM(io, allocator, conn, cfg, args[0], force);
 }
 
 fn cmdIP(allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection, cfg: *const config.Config) !void {

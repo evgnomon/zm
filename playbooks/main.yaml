@@ -1,0 +1,16 @@
+---
+- name: Build
+  hosts: localhost
+  gather_facts: false
+  collections:
+    - evgnomon.catamaran
+  roles:
+    - z_build
+
+- name: Release on tag
+  hosts: localhost
+  gather_facts: false
+  collections:
+    - evgnomon.catamaran
+  roles:
+    - z_tag_release

@@ -1,0 +1,39 @@
+name: Yacht
+
+on:
+  push:
+    branches:
+      - '*'
+    tags:
+      - "*"
+  delete:
+    branches:
+      - '*'
+
+
+jobs:
+  yacht:
+    if: ${{ github.event.ref_type != 'branch' || github.event.ref != 'main' }}
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/evgnomon/barge:main
+    permissions:
+      contents: write
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install dependencies
+      run: |
+        apt-get update
+        apt-get install -y libvirt-dev libisoburn-dev libisofs-dev libburn-dev
+    - name: Extract branch name
+      shell: bash
+      run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+      id: extract_branch
+    - name: Run Playbook
+      uses: evgnomon/yacht@main
+      with:
+        vault: ${{ secrets.VAULT_FILE }}
+        vault_pass: ${{ secrets.VAULT_PASS }}
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        inventory: playbooks/${{ steps.extract_branch.outputs.branch }}_inventory.yaml
