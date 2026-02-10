@@ -9,6 +9,7 @@ pub const vm = @import("vm.zig");
 pub const cloudinit = @import("cloudinit.zig");
 pub const libvirt = @import("libvirt.zig");
 pub const network = @import("network.zig");
+pub const ssh_conf = @import("ssh_conf.zig");
 
 // Version information
 pub const version = "0.2.0";

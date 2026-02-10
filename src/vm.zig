@@ -7,6 +7,7 @@ const config = @import("config.zig");
 const cloudinit = @import("cloudinit.zig");
 const libvirt = @import("libvirt.zig");
 const network = @import("network.zig");
+const ssh_conf = @import("ssh_conf.zig");
 
 pub const VMSpecs = struct {
     memory: u64 = 1024 * 1024, // in KiB
@@ -63,6 +64,11 @@ pub fn createVM(
     const cloud_init_template = try std.fs.path.join(allocator, &.{ cfg.cloud_init_template_path, "cloud-init-user-data.yaml" });
     defer allocator.free(cloud_init_template);
 
+    // Ensure cloud-init user-data template exists; create from config if missing
+    ensureCloudInitTemplate(io, allocator, cfg, cloud_init_template) catch |err| {
+        std.log.warn("Could not ensure cloud-init template: {}", .{err});
+    };
+
     const cloud_init_iso = try std.fmt.allocPrint(allocator, "/tmp/{s}-cloud-init.iso", .{domain_name});
     defer allocator.free(cloud_init_iso);
 
@@ -95,6 +101,15 @@ pub fn createVM(
             };
             defer allocator.free(ip);
             std.log.info("VM IP address: {s}", .{ip});
+
+            // 9. Create SSH config entry
+            ssh_conf.createSshHostConfig(io, allocator, .{
+                .host = domain_name,
+                .hostname = ip,
+                .user = cfg.username,
+            }) catch |err| {
+                std.log.warn("Could not create SSH config: {}", .{err});
+            };
         }
     } else {
         std.log.info("Domain '{s}' created but not started", .{domain_name});
@@ -135,6 +150,11 @@ pub fn deleteVM(
         if (err != error.FileNotFound) {
             std.log.warn("Could not delete disk image: {}", .{err});
         }
+    };
+
+    // Remove SSH config entry
+    ssh_conf.removeSshHostConfig(io, allocator, domain_name) catch |err| {
+        std.log.warn("Could not remove SSH config: {}", .{err});
     };
 
     std.log.info("Domain '{s}' deleted", .{domain_name});
@@ -247,6 +267,43 @@ pub fn showVMInfo(
 
     // const state = dom.getState() catch "unknown";
     // std.log.info("  State: {s}", .{@tagName(state)});
+}
+
+fn ensureCloudInitTemplate(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    cfg: *const config.Config,
+    template_path: []const u8,
+) !void {
+    // Check if the template already exists
+    _ = std.Io.Dir.cwd().statFile(io, template_path, .{}) catch |err| {
+        if (err == error.FileNotFound) {
+            if (cfg.ssh_key.len == 0) {
+                std.log.err("Cloud-init template missing and no ssh_key configured in /etc/zm/config.yaml", .{});
+                return error.MissingConfig;
+            }
+
+            std.log.info("Creating cloud-init template at {s}", .{template_path});
+
+            const content = try std.fmt.allocPrint(allocator,
+                \\#cloud-config
+                \\users:
+                \\  - name: {s}
+                \\    sudo: ALL=(ALL) NOPASSWD:ALL
+                \\    shell: /bin/bash
+                \\    ssh_authorized_keys:
+                \\      - {s}
+                \\
+            , .{ cfg.username, cfg.ssh_key });
+            defer allocator.free(content);
+
+            const file = try std.Io.Dir.cwd().createFile(io, template_path, .{});
+            defer file.close(io);
+            try file.writeStreamingAll(io, content);
+            return;
+        }
+        return err;
+    };
 }
 
 fn generateDomainXML(
