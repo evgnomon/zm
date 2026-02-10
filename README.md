@@ -59,6 +59,38 @@ default_machine=pc-q35-10.0
 max_retries=30
 ```
 
+### Setting Up Base Images
+
+Create the images directory and add your base VM image:
+
+```bash
+sudo mkdir -p /usr/share/zm/images
+sudo mkdir -p /usr/share/zm/images/cloud-init
+```
+
+Download and extract ZAmin cloud image:
+```bash
+sudo wget -P /usr/share/zm/images/ \
+  https://archive.evgnomon.org/zamin/zamin-0.0.1.tar.gz
+sudo tar -xzf /usr/share/zm/images/zamin-0.0.1.tar.gz -C /usr/share/zm/images/
+```
+
+
+Create the cloud-init user-data template:
+```bash
+sudo tee /usr/share/zm/images/cloud-init/cloud-init-user-data.yaml << 'EOF'
+#cloud-config
+users:
+  - name: user
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa YOUR_PUBLIC_KEY_HERE
+EOF
+```
+
+Replace `YOUR_PUBLIC_KEY_HERE` with your actual SSH public key from `~/.ssh/id_rsa.pub`.
+
 ## Usage
 
 ### Basic Usage

@@ -1,0 +1,11 @@
+{
+  "name": "zm",
+  "version": "0.2.0",
+  "description": "A lightweight KVM/QEMU virtual machine creation tool",
+  "maintainer": "hg@evgnomon.org",
+  "depends": "libvirt0, libisofs6, libisoburn1, libburn4",
+  "section": "admin",
+  "priority": "optional",
+  "homepage": "https://github.com/evgnomon/zm",
+  "license": "HGL"
+}

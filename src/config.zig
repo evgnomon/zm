@@ -19,12 +19,12 @@ pub const Config = struct {
         // No heap allocations in current Config
     }
 
-    pub fn loadFromFile(_: @This(), allocator: std.mem.Allocator, path: []const u8) !Config {
+    pub fn loadFromFile(_: @This(), io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Config {
         var config = Config{};
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+        defer file.close(io);
         var buf: [1024 * 1024]u8 = undefined;
-        _ = try file.read(buf[0..]);
+        _ = try file.readPositionalAll(io, buf[0..], 0);
 
         // Simple key-value parsing (can be upgraded to YAML later)
         var lines = std.mem.splitScalar(u8, &buf, '\n');
