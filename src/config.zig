@@ -10,6 +10,7 @@ pub const Config = struct {
     max_retries: u32 = 30,
     username: []const u8 = "zm",
     ssh_key: []const u8 = "",
+    identity_file: []const u8 = "~/.ssh/id_ed25519",
     _file_buffer: ?[]u8 = null,
     _allocator: ?std.mem.Allocator = null,
 
@@ -64,6 +65,8 @@ pub const Config = struct {
                 cfg.username = value;
             } else if (std.mem.eql(u8, key, "ssh_key")) {
                 cfg.ssh_key = value;
+            } else if (std.mem.eql(u8, key, "identity_file")) {
+                cfg.identity_file = value;
             }
         }
 

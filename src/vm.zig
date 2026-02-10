@@ -107,6 +107,7 @@ pub fn createVM(
                 .host = domain_name,
                 .hostname = ip,
                 .user = cfg.username,
+                .identity_file = cfg.identity_file,
             }) catch |err| {
                 std.log.warn("Could not create SSH config: {}", .{err});
             };
