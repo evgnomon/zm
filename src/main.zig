@@ -33,11 +33,14 @@ pub fn main(init: std.process.Init) !void {
 
     // Load configuration
     var cfg = config.Config.init();
-    _ = cfg.loadFromFile(io, allocator, "/etc/zm/config") catch |err| {
+    defer cfg.deinit();
+    if (cfg.loadFromFile(io, allocator, "/etc/zm/config.yaml")) |loaded| {
+        cfg = loaded;
+    } else |err| {
         if (err != error.FileNotFound) {
             std.log.warn("Could not load config: {}", .{err});
         }
-    };
+    }
 
     // Open libvirt connection
     const conn = try libvirt.Connection.open("qemu:///system");

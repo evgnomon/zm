@@ -8,62 +8,75 @@ pub const Config = struct {
     default_vcpus: u32 = 2,
     default_machine: []const u8 = "pc-q35-10.0",
     max_retries: u32 = 30,
+    username: []const u8 = "zm",
+    ssh_key: []const u8 = "",
+    identity_file: []const u8 = "~/.ssh/id_ed25519",
+    _file_buffer: ?[]u8 = null,
+    _allocator: ?std.mem.Allocator = null,
 
     pub fn init() Config {
         return Config{};
     }
 
-    pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
-        _ = self;
-        _ = allocator;
-        // No heap allocations in current Config
+    pub fn deinit(self: *Config) void {
+        if (self._allocator) |alloc| {
+            if (self._file_buffer) |buf| {
+                alloc.free(buf);
+            }
+        }
     }
 
     pub fn loadFromFile(_: @This(), io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Config {
-        var config = Config{};
+        var cfg = Config{};
+        cfg._allocator = allocator;
         const file = try std.Io.Dir.cwd().openFile(io, path, .{});
         defer file.close(io);
-        var buf: [1024 * 1024]u8 = undefined;
-        _ = try file.readPositionalAll(io, buf[0..], 0);
+        const buf = try allocator.alloc(u8, 1024 * 1024);
+        errdefer allocator.free(buf);
+        const bytes_read = try file.readPositionalAll(io, buf, 0);
+        cfg._file_buffer = buf;
 
-        // Simple key-value parsing (can be upgraded to YAML later)
-        var lines = std.mem.splitScalar(u8, &buf, '\n');
+        // Parse YAML-style key: value config
+        var lines = std.mem.splitScalar(u8, buf[0..bytes_read], '\n');
         while (lines.next()) |line| {
-            if (line.len == 0 or line[0] == '#') continue;
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (trimmed.len == 0 or trimmed[0] == '#' or std.mem.startsWith(u8, trimmed, "---")) continue;
 
-            var parts = std.mem.splitScalar(u8, line, '=');
-            const key = parts.next() orelse continue;
-            const value = parts.next() orelse continue;
+            // Split on first ": " to handle values containing colons/spaces
+            const sep_idx = std.mem.indexOf(u8, trimmed, ": ") orelse continue;
+            const key = std.mem.trim(u8, trimmed[0..sep_idx], " \t");
+            const value = std.mem.trim(u8, trimmed[sep_idx + 2 ..], " \t");
 
             if (std.mem.eql(u8, key, "base_image_path")) {
-                const copy = try allocator.dupe(u8, value);
-                config.base_image_path = copy;
+                cfg.base_image_path = value;
             } else if (std.mem.eql(u8, key, "vm_storage_path")) {
-                const copy = try allocator.dupe(u8, value);
-                config.vm_storage_path = copy;
+                cfg.vm_storage_path = value;
             } else if (std.mem.eql(u8, key, "cloud_init_template_path")) {
-                const copy = try allocator.dupe(u8, value);
-                config.cloud_init_template_path = copy;
+                cfg.cloud_init_template_path = value;
             } else if (std.mem.eql(u8, key, "default_memory")) {
-                config.default_memory = try std.fmt.parseInt(u64, value, 10);
+                cfg.default_memory = try std.fmt.parseInt(u64, value, 10);
             } else if (std.mem.eql(u8, key, "default_vcpus")) {
-                config.default_vcpus = try std.fmt.parseInt(u32, value, 10);
+                cfg.default_vcpus = try std.fmt.parseInt(u32, value, 10);
             } else if (std.mem.eql(u8, key, "default_machine")) {
-                const copy = try allocator.dupe(u8, value);
-                config.default_machine = copy;
+                cfg.default_machine = value;
             } else if (std.mem.eql(u8, key, "max_retries")) {
-                config.max_retries = try std.fmt.parseInt(u32, value, 10);
+                cfg.max_retries = try std.fmt.parseInt(u32, value, 10);
+            } else if (std.mem.eql(u8, key, "username")) {
+                cfg.username = value;
+            } else if (std.mem.eql(u8, key, "ssh_key")) {
+                cfg.ssh_key = value;
+            } else if (std.mem.eql(u8, key, "identity_file")) {
+                cfg.identity_file = value;
             }
         }
 
-        return config;
+        return cfg;
     }
 
     pub fn getDefaultConfigPath(allocator: std.mem.Allocator) ![]const u8 {
-        // Try /etc/zm/config, then ~/.config/zm/config
         const paths = &[_][]const u8{
-            "/etc/zm/config",
-            try std.fs.path.join(allocator, &.{ std.os.getenv("HOME") orelse "", ".config", "zm", "config" }),
+            "/etc/zm/config.yaml",
+            try std.fs.path.join(allocator, &.{ std.os.getenv("HOME") orelse "", ".config", "zm", "config.yaml" }),
         };
 
         for (paths) |path| {

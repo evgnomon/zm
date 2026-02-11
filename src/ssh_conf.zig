@@ -1,30 +1,21 @@
 const std = @import("std");
 
+const ssh_config_d = "/etc/ssh/ssh_config.d";
+
 pub const SshConfig = struct {
     host: []const u8,
     hostname: []const u8,
-    user: []const u8,
-    port: u16,
-    identity_file: []const u8,
-};
-
-pub const SshConfigError = error{
-    HomeNotFound,
+    user: []const u8 = "root",
+    port: u16 = 22,
+    identity_file: []const u8 = "~/.ssh/id_ed25519",
 };
 
 pub fn createSshHostConfig(io: std.Io, allocator: std.mem.Allocator, conf: SshConfig) !void {
-    const home = std.posix.getenv("HOME") orelse return SshConfigError.HomeNotFound;
+    const filename = try std.fmt.allocPrint(allocator, "{s}.conf", .{conf.host});
+    defer allocator.free(filename);
 
-    const config_d_path = try std.fs.path.join(allocator, &.{ home, ".ssh", "config.d" });
-    defer allocator.free(config_d_path);
-
-    const host_config_path = try std.fs.path.join(allocator, &.{ config_d_path, conf.host });
+    const host_config_path = try std.fs.path.join(allocator, &.{ ssh_config_d, filename });
     defer allocator.free(host_config_path);
-
-    // Ensure .ssh/config.d directory exists
-    std.Io.Dir.cwd().makePath(io, config_d_path) catch |err| {
-        if (err != error.PathAlreadyExists) return err;
-    };
 
     // Format the SSH config entry
     const config_entry = try std.fmt.allocPrint(allocator,
@@ -44,10 +35,13 @@ pub fn createSshHostConfig(io: std.Io, allocator: std.mem.Allocator, conf: SshCo
 }
 
 pub fn removeSshHostConfig(io: std.Io, allocator: std.mem.Allocator, host: []const u8) !void {
-    const home = std.posix.getenv("HOME") orelse return SshConfigError.HomeNotFound;
+    const filename = try std.fmt.allocPrint(allocator, "{s}.conf", .{host});
+    defer allocator.free(filename);
 
-    const host_config_path = try std.fs.path.join(allocator, &.{ home, ".ssh", "config.d", host });
+    const host_config_path = try std.fs.path.join(allocator, &.{ ssh_config_d, filename });
     defer allocator.free(host_config_path);
 
-    try std.Io.Dir.cwd().deleteFile(io, host_config_path);
+    std.Io.Dir.cwd().deleteFile(io, host_config_path) catch |err| {
+        if (err != error.FileNotFound) return err;
+    };
 }
