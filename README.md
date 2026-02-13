@@ -1,11 +1,6 @@
-```
-  ________ __  __
- |___  /  |  \/  |
-    / /   | |\/| |
-   / /__  | |  | |
-  /_____|_|_|  |_|
-
-```
+<p align="center">
+  <img src="assets/logo.svg" alt="ZM Logo" width="300">
+</p>
 
 # zm
 

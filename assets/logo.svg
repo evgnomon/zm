@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120" width="300" height="120">
+  <defs>
+    <style>
+      .zm-text { 
+        font-family: 'Courier New', monospace; 
+        font-size: 72px; 
+        font-weight: bold; 
+        fill: #F7A41D;
+      }
+      .zm-bg { 
+        fill: #2B2B2B; 
+      }
+    </style>
+  </defs>
+  
+  <!-- Background rectangle with rounded corners -->
+  <rect class="zm-bg" x="0" y="0" width="300" height="120" rx="10"/>
+  
+  <!-- ZM Text -->
+  <text class="zm-text" x="50%" y="50%" dominant-baseline="middle" text-anchor="middle">ZM</text>
+</svg>
