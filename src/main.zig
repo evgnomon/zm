@@ -66,6 +66,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdDelete(io, allocator, args[2..], &conn, &cfg);
     } else if (std.mem.eql(u8, command, "ip")) {
         try cmdIP(allocator, args[2..], &conn, &cfg);
+    } else if (std.mem.eql(u8, command, "snapshot")) {
+        try cmdSnapshot(allocator, args[2..], &conn);
     } else {
         // Legacy mode: treat as create command
         if (args.len >= 2) {
@@ -100,6 +102,10 @@ fn printHelp() !void {
         \\  stop <name>                        Stop a VM
         \\  delete <name>                      Delete a VM
         \\  ip <name>                          Get VM IP address
+        \\  snapshot create <name> <snap>      Create a snapshot
+        \\  snapshot list <name>               List snapshots for a VM
+        \\  snapshot restore <name> <snap>     Revert VM to a snapshot
+        \\  snapshot delete <name> <snap>      Delete a snapshot
         \\
         \\Options for 'create':
         \\  --memory <size>                    Set memory (default: 1GiB)
@@ -131,7 +137,13 @@ fn printHelp() !void {
 }
 
 fn printVersion() !void {
-    std.debug.print("zm version {s}\n", .{version});
+    std.debug.print(
+        \\zm version {s}
+        \\Copyright (C) 2022-26 evgnomon.org by Hamed Ghasemzadeh. All rights reserved.
+        \\License: HGL General License <https://evgnomon.org/docs/hgl>
+        \\There is NO warranty expressed or implied; to the extent permitted by law.
+        \\
+    , .{version});
 }
 
 fn cmdCreate(io: std.Io, allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection, cfg: *const config.Config) !void {
@@ -289,4 +301,48 @@ fn cmdIP(allocator: std.mem.Allocator, args: []const []const u8, conn: *const li
     }
 
     try vm.getVMIP(allocator, conn, cfg, args[0]);
+}
+
+fn cmdSnapshot(allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection) !void {
+    if (args.len == 0) {
+        std.log.err("Error: snapshot subcommand required", .{});
+        std.log.err("Usage: zm snapshot <create|list|restore|delete> <name> [snapshot-name]", .{});
+        std.process.exit(1);
+    }
+
+    const subcmd = args[0];
+
+    if (std.mem.eql(u8, subcmd, "create")) {
+        if (args.len < 3) {
+            std.log.err("Error: domain name and snapshot name required", .{});
+            std.log.err("Usage: zm snapshot create <name> <snapshot-name>", .{});
+            std.process.exit(1);
+        }
+        try vm.createSnapshot(allocator, conn, args[1], args[2]);
+    } else if (std.mem.eql(u8, subcmd, "list")) {
+        if (args.len < 2) {
+            std.log.err("Error: domain name required", .{});
+            std.log.err("Usage: zm snapshot list <name>", .{});
+            std.process.exit(1);
+        }
+        try vm.listSnapshots(allocator, conn, args[1]);
+    } else if (std.mem.eql(u8, subcmd, "restore")) {
+        if (args.len < 3) {
+            std.log.err("Error: domain name and snapshot name required", .{});
+            std.log.err("Usage: zm snapshot restore <name> <snapshot-name>", .{});
+            std.process.exit(1);
+        }
+        try vm.restoreSnapshot(allocator, conn, args[1], args[2]);
+    } else if (std.mem.eql(u8, subcmd, "delete")) {
+        if (args.len < 3) {
+            std.log.err("Error: domain name and snapshot name required", .{});
+            std.log.err("Usage: zm snapshot delete <name> <snapshot-name>", .{});
+            std.process.exit(1);
+        }
+        try vm.deleteSnapshot(allocator, conn, args[1], args[2]);
+    } else {
+        std.log.err("Error: unknown snapshot subcommand: {s}", .{subcmd});
+        std.log.err("Usage: zm snapshot <create|list|restore|delete> <name> [snapshot-name]", .{});
+        std.process.exit(1);
+    }
 }

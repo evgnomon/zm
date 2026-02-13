@@ -13,6 +13,11 @@ pub const LibvirtError = error{
     DomainLookupFailed,
     DomainDestroyFailed,
     DomainUndefineFailed,
+    SnapshotCreateFailed,
+    SnapshotDeleteFailed,
+    SnapshotRevertFailed,
+    SnapshotLookupFailed,
+    SnapshotListFailed,
 };
 
 // Custom error handler that suppresses errors
@@ -185,6 +190,69 @@ pub const Domain = struct {
         return c.virDomainIsActive(self.dom) == 1;
     }
 
+    pub fn createSnapshot(self: *const Domain, allocator: std.mem.Allocator, name: []const u8) !Snapshot {
+        const xml = try std.fmt.allocPrint(allocator, "<domainsnapshot><name>{s}</name></domainsnapshot>", .{name});
+        defer allocator.free(xml);
+
+        const c_xml = try allocator.dupeZ(u8, xml);
+        defer allocator.free(c_xml);
+
+        const snap = c.virDomainSnapshotCreateXML(self.dom, c_xml, 0) orelse {
+            return LibvirtError.SnapshotCreateFailed;
+        };
+
+        return Snapshot{ .snap = snap };
+    }
+
+    pub fn revertToSnapshot(self: *const Domain, allocator: std.mem.Allocator, name: []const u8) !void {
+        const c_name = try allocator.dupeZ(u8, name);
+        defer allocator.free(c_name);
+
+        const snap = c.virDomainSnapshotLookupByName(self.dom, c_name, 0) orelse {
+            return LibvirtError.SnapshotLookupFailed;
+        };
+        defer _ = c.virDomainSnapshotFree(snap);
+
+        if (c.virDomainRevertToSnapshot(snap, 0) < 0) {
+            return LibvirtError.SnapshotRevertFailed;
+        }
+    }
+
+    pub fn deleteSnapshot(self: *const Domain, allocator: std.mem.Allocator, name: []const u8) !void {
+        const c_name = try allocator.dupeZ(u8, name);
+        defer allocator.free(c_name);
+
+        const snap = c.virDomainSnapshotLookupByName(self.dom, c_name, 0) orelse {
+            return LibvirtError.SnapshotLookupFailed;
+        };
+        defer _ = c.virDomainSnapshotFree(snap);
+
+        if (c.virDomainSnapshotDelete(snap, 0) < 0) {
+            return LibvirtError.SnapshotDeleteFailed;
+        }
+    }
+
+    pub fn listSnapshots(self: *const Domain, allocator: std.mem.Allocator) ![][]const u8 {
+        const max_names: i32 = 256;
+        var names: [256][*c]u8 = undefined;
+        const n = c.virDomainSnapshotListNames(self.dom, @ptrCast(&names), max_names, 0);
+
+        if (n < 0) return LibvirtError.SnapshotListFailed;
+
+        var result: std.ArrayList([]const u8) = .empty;
+        errdefer {
+            for (result.items) |name| allocator.free(name);
+            result.deinit(allocator);
+        }
+
+        for (names[0..@intCast(n)]) |name_ptr| {
+            const name_copy = try allocator.dupe(u8, mem.span(name_ptr));
+            try result.append(allocator, name_copy);
+        }
+
+        return result.toOwnedSlice(allocator);
+    }
+
     // pub fn getState(self: *const Domain) !c.virDomainState {
     //     var state: c_int = undefined;
     //     var reason: c_int = undefined;
@@ -193,4 +261,23 @@ pub const Domain = struct {
     //     }
     //     return @as(c.virDomainState, @enumFromInt(state));
     // }
+};
+
+pub const Snapshot = struct {
+    snap: *c.virDomainSnapshot,
+
+    pub fn free(self: Snapshot) void {
+        _ = c.virDomainSnapshotFree(self.snap);
+    }
+
+    pub fn delete(self: Snapshot) !void {
+        if (c.virDomainSnapshotDelete(self.snap, 0) < 0) {
+            return LibvirtError.SnapshotDeleteFailed;
+        }
+    }
+
+    pub fn getName(self: Snapshot) []const u8 {
+        const name = c.virDomainSnapshotGetName(self.snap);
+        return mem.span(name);
+    }
 };
