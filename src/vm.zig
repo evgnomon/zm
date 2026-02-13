@@ -270,6 +270,77 @@ pub fn showVMInfo(
     // std.log.info("  State: {s}", .{@tagName(state)});
 }
 
+pub fn createSnapshot(
+    allocator: std.mem.Allocator,
+    conn: *const libvirt.Connection,
+    domain_name: []const u8,
+    snapshot_name: []const u8,
+) !void {
+    const dom = try conn.lookupDomain(allocator, domain_name);
+    defer dom.free();
+
+    std.log.info("Creating snapshot '{s}' for domain '{s}'", .{ snapshot_name, domain_name });
+    const snap = try dom.createSnapshot(allocator, snapshot_name);
+    defer snap.free();
+
+    std.log.info("Snapshot '{s}' created", .{snapshot_name});
+}
+
+pub fn deleteSnapshot(
+    allocator: std.mem.Allocator,
+    conn: *const libvirt.Connection,
+    domain_name: []const u8,
+    snapshot_name: []const u8,
+) !void {
+    const dom = try conn.lookupDomain(allocator, domain_name);
+    defer dom.free();
+
+    std.log.info("Deleting snapshot '{s}' from domain '{s}'", .{ snapshot_name, domain_name });
+    try dom.deleteSnapshot(allocator, snapshot_name);
+
+    std.log.info("Snapshot '{s}' deleted", .{snapshot_name});
+}
+
+pub fn restoreSnapshot(
+    allocator: std.mem.Allocator,
+    conn: *const libvirt.Connection,
+    domain_name: []const u8,
+    snapshot_name: []const u8,
+) !void {
+    const dom = try conn.lookupDomain(allocator, domain_name);
+    defer dom.free();
+
+    std.log.info("Reverting domain '{s}' to snapshot '{s}'", .{ domain_name, snapshot_name });
+    try dom.revertToSnapshot(allocator, snapshot_name);
+
+    std.log.info("Domain '{s}' reverted to snapshot '{s}'", .{ domain_name, snapshot_name });
+}
+
+pub fn listSnapshots(
+    allocator: std.mem.Allocator,
+    conn: *const libvirt.Connection,
+    domain_name: []const u8,
+) !void {
+    const dom = try conn.lookupDomain(allocator, domain_name);
+    defer dom.free();
+
+    const snapshots = try dom.listSnapshots(allocator);
+    defer {
+        for (snapshots) |name| allocator.free(name);
+        allocator.free(snapshots);
+    }
+
+    if (snapshots.len == 0) {
+        std.log.info("No snapshots for domain '{s}'", .{domain_name});
+        return;
+    }
+
+    std.log.info("Snapshots for domain '{s}':", .{domain_name});
+    for (snapshots) |name| {
+        std.log.info("  {s}", .{name});
+    }
+}
+
 fn ensureCloudInitTemplate(
     io: std.Io,
     allocator: std.mem.Allocator,
