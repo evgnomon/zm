@@ -110,6 +110,7 @@ fn printHelp() !void {
         \\Options for 'create':
         \\  --memory <size>                    Set memory (default: 1GiB)
         \\  --vcpus <num>                      Set number of vCPUs (default: 2)
+        \\  --disk-size <size>                 Set disk size (default: 10G)
         \\  --machine <type>                   Set machine type (default: pc-q35-10.0)
         \\  --image <path>                     Use custom base image
         \\  --no-start                         Create but don't start VM
@@ -127,7 +128,7 @@ fn printHelp() !void {
         \\
         \\Examples:
         \\  zm create myvm
-        \\  zm create myvm --memory 2GiB --vcpus 4
+        \\  zm create myvm --memory 2GiB --vcpus 4 --disk-size 20G
         \\  zm create myvm --no-start
         \\  zm list
         \\  zm start myvm
@@ -193,6 +194,16 @@ fn cmdCreate(io: std.Io, allocator: std.mem.Allocator, args: []const []const u8,
             }
             specs.image_path = args[i + 1];
             i += 2;
+        } else if (std.mem.eql(u8, args[i], "--disk-size")) {
+            if (i + 1 >= args.len) {
+                std.log.err("Error: --disk-size requires a value", .{});
+                std.process.exit(1);
+            }
+            specs.disk_size = parseDiskSize(args[i + 1]) catch |err| {
+                std.log.err("Error: invalid disk-size value: {}", .{err});
+                std.process.exit(1);
+            };
+            i += 2;
         } else if (std.mem.eql(u8, args[i], "--no-start")) {
             specs.start = false;
             i += 1;
@@ -226,6 +237,37 @@ fn parseMemory(value: []const u8) !u64 {
     }
 
     // Try parsing as raw KiB
+    return std.fmt.parseInt(u64, value, 10);
+}
+
+fn parseDiskSize(value: []const u8) !u64 {
+    const len = value.len;
+
+    // Check for 3-char suffix (GiB, MiB)
+    if (len > 3) {
+        const suffix = value[len - 3 ..];
+        if (std.mem.eql(u8, suffix, "GiB")) {
+            const base = try std.fmt.parseInt(u64, value[0 .. len - 3], 10);
+            return base * 1024 * 1024 * 1024;
+        } else if (std.mem.eql(u8, suffix, "MiB")) {
+            const base = try std.fmt.parseInt(u64, value[0 .. len - 3], 10);
+            return base * 1024 * 1024;
+        }
+    }
+
+    // Check for 1-char suffix (G, M)
+    if (len > 1) {
+        const last = value[len - 1];
+        if (last == 'G') {
+            const base = try std.fmt.parseInt(u64, value[0 .. len - 1], 10);
+            return base * 1024 * 1024 * 1024;
+        } else if (last == 'M') {
+            const base = try std.fmt.parseInt(u64, value[0 .. len - 1], 10);
+            return base * 1024 * 1024;
+        }
+    }
+
+    // Raw bytes
     return std.fmt.parseInt(u64, value, 10);
 }
 

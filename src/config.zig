@@ -6,6 +6,7 @@ pub const Config = struct {
     cloud_init_template_path: []const u8 = "/usr/share/zm/images/cloud-init",
     default_memory: u64 = 1024 * 1024, // 1GiB in KiB
     default_vcpus: u32 = 2,
+    default_disk_size: u64 = 10 * 1024 * 1024 * 1024, // 10GiB in bytes
     default_machine: []const u8 = "pc-q35-10.0",
     max_retries: u32 = 30,
     username: []const u8 = "zm",
@@ -57,6 +58,8 @@ pub const Config = struct {
                 cfg.default_memory = try std.fmt.parseInt(u64, value, 10);
             } else if (std.mem.eql(u8, key, "default_vcpus")) {
                 cfg.default_vcpus = try std.fmt.parseInt(u32, value, 10);
+            } else if (std.mem.eql(u8, key, "default_disk_size")) {
+                cfg.default_disk_size = try std.fmt.parseInt(u64, value, 10);
             } else if (std.mem.eql(u8, key, "default_machine")) {
                 cfg.default_machine = value;
             } else if (std.mem.eql(u8, key, "max_retries")) {

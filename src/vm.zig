@@ -13,7 +13,7 @@ pub const VMSpecs = struct {
     memory: u64 = 1024 * 1024, // in KiB
     vcpus: u32 = 2,
     machine: []const u8 = "pc-q35-10.0",
-    disk_size: ?u64 = null, // in bytes
+    disk_size: u64 = 10 * 1024 * 1024 * 1024, // 10GiB in bytes
     image_path: ?[]const u8 = null,
     start: bool = true,
     wait_for_ip: bool = true,
@@ -24,6 +24,7 @@ pub const VMError = error{
     PermissionChangeFailed,
     InvalidDomainName,
     VMAlreadyExists,
+    DiskResizeFailed,
 };
 
 pub fn createVM(
@@ -60,7 +61,17 @@ pub fn createVM(
         try file.setPermissions(io, .default_file);
     }
 
-    // 3. Create cloud-init ISO
+    // 3. Resize disk image
+    std.log.info("Resizing disk image to {d} bytes", .{specs.disk_size});
+    conn.resizeVolume(allocator, dst_image, specs.disk_size) catch |err| {
+        std.log.err("Failed to resize disk image: {}", .{err});
+        std.Io.Dir.cwd().deleteFile(io, dst_image) catch |del_err| {
+            std.log.warn("Failed to clean up copied disk image {s}: {}", .{ dst_image, del_err });
+        };
+        return VMError.DiskResizeFailed;
+    };
+
+    // 4. Create cloud-init ISO
     const cloud_init_template = try std.fs.path.join(allocator, &.{ cfg.cloud_init_template_path, "cloud-init-user-data.yaml" });
     defer allocator.free(cloud_init_template);
 
@@ -75,25 +86,25 @@ pub fn createVM(
     std.log.info("Creating cloud-init ISO at {s}", .{cloud_init_iso});
     try cloudinit.createCloudInitISO(io, allocator, domain_name, cloud_init_template, cloud_init_iso);
 
-    // 4. Generate MAC address
+    // 5. Generate MAC address
     const mac_addr = network.generateMACAddress(domain_name);
 
-    // 5. Generate domain XML
+    // 6. Generate domain XML
     const xml = try generateDomainXML(allocator, domain_name, dst_image, cloud_init_iso, mac_addr, specs);
     defer allocator.free(xml);
 
-    // 6. Define domain
+    // 7. Define domain
     std.log.info("Defining domain '{s}'", .{domain_name});
     const dom = try libvirt.Domain.defineXML(conn, allocator, xml);
     defer dom.free();
 
-    // 7. Start domain if requested
+    // 8. Start domain if requested
     if (specs.start) {
         std.log.info("Starting domain '{s}'", .{domain_name});
         try dom.create();
         std.log.info("Domain '{s}' created and started", .{domain_name});
 
-        // 8. Wait for IP if requested
+        // 9. Wait for IP if requested
         if (specs.wait_for_ip) {
             const ip = network.getIPAddress(&dom, allocator, &mac_addr, cfg.max_retries) catch |err| {
                 std.log.warn("Could not retrieve IP address: {}", .{err});

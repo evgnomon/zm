@@ -19,6 +19,8 @@ pub const LibvirtError = error{
     SnapshotRevertFailed,
     SnapshotLookupFailed,
     SnapshotListFailed,
+    VolumeLookupFailed,
+    VolumeResizeFailed,
 };
 
 fn xmlEscape(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
@@ -97,6 +99,28 @@ pub const Connection = struct {
         }
 
         return domains.toOwnedSlice(allocator);
+    }
+
+    pub fn refreshDefaultPool(self: *const Connection) void {
+        const pool = c.virStoragePoolLookupByName(self.conn, "default") orelse return;
+        defer _ = c.virStoragePoolFree(pool);
+        _ = c.virStoragePoolRefresh(pool, 0);
+    }
+
+    pub fn resizeVolume(self: *const Connection, allocator: std.mem.Allocator, path: []const u8, size_bytes: u64) !void {
+        const c_path = try allocator.dupeZ(u8, path);
+        defer allocator.free(c_path);
+
+        self.refreshDefaultPool();
+
+        const vol = c.virStorageVolLookupByPath(self.conn, c_path) orelse {
+            return LibvirtError.VolumeLookupFailed;
+        };
+        defer _ = c.virStorageVolFree(vol);
+
+        if (c.virStorageVolResize(vol, @intCast(size_bytes), 0) < 0) {
+            return LibvirtError.VolumeResizeFailed;
+        }
     }
 
     pub fn lookupDomain(self: *const Connection, allocator: std.mem.Allocator, name: []const u8) !Domain {
