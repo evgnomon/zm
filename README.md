@@ -36,7 +36,7 @@ sudo pacman -S zig libvirt libisofs libisoburn libburn
 ### Build
 
 ```bash
-zig build -Doptimize=ReleaseSafe
+zig build -Doptimize=ReleaseFast
 sudo zig build install
 ```
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const config = @import("config.zig");
 const vm = @import("vm.zig");
 const libvirt = @import("libvirt.zig");
+const zm_init = @import("init.zig");
 
 const version = "0.2.0";
 
@@ -30,6 +31,12 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const io = init.io;
+
+    // Handle init command before libvirt/config (runs before those are available)
+    if (std.mem.eql(u8, args[1], "init")) {
+        try cmdInit(io, allocator);
+        return;
+    }
 
     // Load configuration
     var cfg = config.Config.init();
@@ -95,6 +102,7 @@ fn printHelp() !void {
         \\  zm <domain-name>                    (legacy mode: create VM)
         \\
         \\Commands:
+        \\  init                               Initialize zm (directories, image, config)
         \\  create <name> [options]            Create a new VM
         \\  list                               List all running VMs
         \\  info <name>                        Show VM information
@@ -145,6 +153,10 @@ fn printVersion() !void {
         \\There is NO warranty expressed or implied; to the extent permitted by law.
         \\
     , .{version});
+}
+
+fn cmdInit(io: std.Io, allocator: std.mem.Allocator) !void {
+    try zm_init.runInit(io, allocator);
 }
 
 fn cmdCreate(io: std.Io, allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection, cfg: *const config.Config) !void {
