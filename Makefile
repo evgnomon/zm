@@ -8,15 +8,15 @@ ENV_FILE := .env
 .PHONY: install clean uninstall build all
 
 .env:
-	@echo "OPTIMIZE=Debug" > .env
+	@touch .env
 
 all: build
 
 build: $(OUTPUT)
 
 $(OUTPUT): $(SOURCES) $(ENV_FILE)
-	zig build -Doptimize=$(OPTIMIZE)
-	touch $(OUTPUT)
+	@zig build -Doptimize=$(OPTIMIZE)
+	@touch $(OUTPUT)
 
 install: build
 	@cp $(OUTPUT) /usr/bin/zm
