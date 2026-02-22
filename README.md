@@ -46,7 +46,7 @@ Create a configuration file at `/etc/zm/config` or `~/.config/zm/config`:
 
 ```
 base_image_path=/usr/share/zm/images
-vm_storage_path=/var/lib/libvirt/images
+vm_storage_path=/var/lib/libvirt/zm
 cloud_init_template_path=/usr/share/zm/images/cloud-init
 default_memory=1048576
 default_vcpus=2

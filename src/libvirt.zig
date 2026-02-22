@@ -21,6 +21,7 @@ pub const LibvirtError = error{
     SnapshotListFailed,
     VolumeLookupFailed,
     VolumeResizeFailed,
+    PoolCreateFailed,
 };
 
 fn xmlEscape(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
@@ -101,19 +102,42 @@ pub const Connection = struct {
         return domains.toOwnedSlice(allocator);
     }
 
-    pub fn refreshDefaultPool(self: *const Connection) void {
-        const pool = c.virStoragePoolLookupByName(self.conn, "default") orelse return;
-        defer _ = c.virStoragePoolFree(pool);
-        _ = c.virStoragePoolRefresh(pool, 0);
+    fn ensurePool(self: *const Connection) !*c.virStoragePool {
+        if (c.virStoragePoolLookupByName(self.conn, "zm")) |pool| {
+            return pool;
+        }
+        const xml =
+            \\<pool type='dir'>
+            \\  <name>zm</name>
+            \\  <target>
+            \\    <path>/var/lib/libvirt/zm</path>
+            \\  </target>
+            \\</pool>
+        ;
+        const pool = c.virStoragePoolDefineXML(self.conn, xml, 0) orelse return LibvirtError.PoolCreateFailed;
+        if (c.virStoragePoolBuild(pool, 0) < 0) {
+            _ = c.virStoragePoolFree(pool);
+            return LibvirtError.PoolCreateFailed;
+        }
+        if (c.virStoragePoolCreate(pool, 0) < 0) {
+            _ = c.virStoragePoolFree(pool);
+            return LibvirtError.PoolCreateFailed;
+        }
+        _ = c.virStoragePoolSetAutostart(pool, 1);
+        std.log.info("Created storage pool 'zm' at /var/lib/libvirt/zm", .{});
+        return pool;
     }
 
     pub fn resizeVolume(self: *const Connection, allocator: std.mem.Allocator, path: []const u8, size_bytes: u64) !void {
-        const c_path = try allocator.dupeZ(u8, path);
-        defer allocator.free(c_path);
+        const pool = try self.ensurePool();
+        defer _ = c.virStoragePoolFree(pool);
+        _ = c.virStoragePoolRefresh(pool, 0);
 
-        self.refreshDefaultPool();
+        const vol_name = std.fs.path.basename(path);
+        const c_vol_name = try allocator.dupeZ(u8, vol_name);
+        defer allocator.free(c_vol_name);
 
-        const vol = c.virStorageVolLookupByPath(self.conn, c_path) orelse {
+        const vol = c.virStorageVolLookupByName(pool, c_vol_name) orelse {
             return LibvirtError.VolumeLookupFailed;
         };
         defer _ = c.virStorageVolFree(vol);

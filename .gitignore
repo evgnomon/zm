@@ -19,3 +19,4 @@ Thumbs.db
 /dist
 node_modules
 .wrangler
+.env

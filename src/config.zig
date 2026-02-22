@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const Config = struct {
     base_image_path: []const u8 = "/usr/share/zm/images",
-    vm_storage_path: []const u8 = "/var/lib/libvirt/images",
+    vm_storage_path: []const u8 = "/var/lib/libvirt/zm",
     cloud_init_template_path: []const u8 = "/usr/share/zm/images/cloud-init",
     default_memory: u64 = 1024 * 1024, // 1GiB in KiB
     default_vcpus: u32 = 2,
