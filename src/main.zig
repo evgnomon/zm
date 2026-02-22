@@ -68,6 +68,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdIP(allocator, args[2..], &conn, &cfg);
     } else if (std.mem.eql(u8, command, "snapshot")) {
         try cmdSnapshot(allocator, args[2..], &conn);
+    } else if (std.mem.eql(u8, command, "fork")) {
+        try cmdFork(io, allocator, args[2..], &conn, &cfg);
     } else {
         // Legacy mode: treat as create command
         if (args.len >= 2) {
@@ -106,8 +108,9 @@ fn printHelp() !void {
         \\  snapshot list <name>               List snapshots for a VM
         \\  snapshot restore <name> <snap>     Revert VM to a snapshot
         \\  snapshot delete <name> <snap>      Delete a snapshot
+        \\  fork <source> <new-name> [options] Fork a VM from an external snapshot
         \\
-        \\Options for 'create':
+        \\Options for 'create' and 'fork':
         \\  --memory <size>                    Set memory (default: 1GiB)
         \\  --vcpus <num>                      Set number of vCPUs (default: 2)
         \\  --disk-size <size>                 Set disk size (default: 10G)
@@ -130,6 +133,8 @@ fn printHelp() !void {
         \\  zm create myvm
         \\  zm create myvm --memory 2GiB --vcpus 4 --disk-size 20G
         \\  zm create myvm --no-start
+        \\  zm fork myvm myvm-copy
+        \\  zm fork myvm myvm-copy --memory 2GiB --vcpus 4
         \\  zm list
         \\  zm start myvm
         \\  zm ip myvm
@@ -343,6 +348,54 @@ fn cmdIP(allocator: std.mem.Allocator, args: []const []const u8, conn: *const li
     }
 
     try vm.getVMIP(allocator, conn, cfg, args[0]);
+}
+
+fn cmdFork(io: std.Io, allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection, cfg: *const config.Config) !void {
+    if (args.len < 2) {
+        std.log.err("Error: source and destination names required", .{});
+        std.log.err("Usage: zm fork <source> <new-name> [options]", .{});
+        std.process.exit(1);
+    }
+
+    const source_name = args[0];
+    const dest_name = args[1];
+    var specs = vm.VMSpecs{};
+
+    var i: usize = 2;
+    while (i < args.len) {
+        if (std.mem.eql(u8, args[i], "--memory")) {
+            if (i + 1 >= args.len) {
+                std.log.err("Error: --memory requires a value", .{});
+                std.process.exit(1);
+            }
+            specs.memory = parseMemory(args[i + 1]) catch |err| {
+                std.log.err("Error: invalid memory value: {}", .{err});
+                std.process.exit(1);
+            };
+            i += 2;
+        } else if (std.mem.eql(u8, args[i], "--vcpus")) {
+            if (i + 1 >= args.len) {
+                std.log.err("Error: --vcpus requires a value", .{});
+                std.process.exit(1);
+            }
+            specs.vcpus = std.fmt.parseInt(u32, args[i + 1], 10) catch {
+                std.log.err("Error: invalid vcpus value", .{});
+                std.process.exit(1);
+            };
+            i += 2;
+        } else if (std.mem.eql(u8, args[i], "--no-start")) {
+            specs.start = false;
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "--no-wait-ip")) {
+            specs.wait_for_ip = false;
+            i += 1;
+        } else {
+            std.log.err("Error: unknown option: {s}", .{args[i]});
+            std.process.exit(1);
+        }
+    }
+
+    try vm.forkVM(io, allocator, conn, cfg, source_name, dest_name, specs);
 }
 
 fn cmdSnapshot(allocator: std.mem.Allocator, args: []const []const u8, conn: *const libvirt.Connection) !void {

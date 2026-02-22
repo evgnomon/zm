@@ -150,19 +150,48 @@ pub fn deleteVM(
         }
     }
 
+    // Determine the actual disk path before undefining so we can delete it.
+    const actual_disk_path: ?[]const u8 = blk: {
+        const xml = dom.getXML(allocator) catch break :blk null;
+        defer allocator.free(xml);
+        break :blk extractVdaDiskPath(allocator, xml) catch null;
+    };
+    defer if (actual_disk_path) |p| allocator.free(p);
+
     // Undefine domain
     std.log.info("Undefining domain '{s}'", .{domain_name});
     try dom.undefine();
 
-    // Delete disk image
-    const disk_path = try std.fmt.allocPrint(allocator, "{s}/{s}.qcow2", .{ cfg.vm_storage_path, domain_name });
-    defer allocator.free(disk_path);
-
-    std.Io.Dir.cwd().deleteFile(io, disk_path) catch |err| {
-        if (err != error.FileNotFound) {
-            std.log.warn("Could not delete disk image: {}", .{err});
+    // Delete disk image.
+    // If the VM was a fork source its active disk is the overlay (<name>-fork.qcow2).
+    // Delete only that overlay and leave the base image (<name>.qcow2) intact so
+    // any derived fork VMs continue to function.
+    const fork_suffix = "-fork.qcow2";
+    if (actual_disk_path) |disk_path| {
+        if (std.mem.endsWith(u8, disk_path, fork_suffix)) {
+            std.log.info("Removing fork overlay '{s}' (base image preserved)", .{disk_path});
+            std.Io.Dir.cwd().deleteFile(io, disk_path) catch |err| {
+                if (err != error.FileNotFound) {
+                    std.log.warn("Could not delete fork overlay: {}", .{err});
+                }
+            };
+        } else {
+            std.Io.Dir.cwd().deleteFile(io, disk_path) catch |err| {
+                if (err != error.FileNotFound) {
+                    std.log.warn("Could not delete disk image: {}", .{err});
+                }
+            };
         }
-    };
+    } else {
+        // Fallback: try the conventional path
+        const disk_path_fallback = try std.fmt.allocPrint(allocator, "{s}/{s}.qcow2", .{ cfg.vm_storage_path, domain_name });
+        defer allocator.free(disk_path_fallback);
+        std.Io.Dir.cwd().deleteFile(io, disk_path_fallback) catch |err| {
+            if (err != error.FileNotFound) {
+                std.log.warn("Could not delete disk image: {}", .{err});
+            }
+        };
+    }
 
     // Remove SSH config entry
     ssh_conf.removeSshHostConfig(io, allocator, domain_name) catch |err| {
@@ -352,6 +381,160 @@ pub fn listSnapshots(
     }
 }
 
+/// Extracts the source file path for the primary disk (device='disk') from domain XML.
+fn extractVdaDiskPath(allocator: std.mem.Allocator, xml: []const u8) ![]const u8 {
+    // Find the first disk section (device='disk'), not the cdrom
+    const disk_marker = "device='disk'";
+    const pos = std.mem.indexOf(u8, xml, disk_marker) orelse return error.DiskPathNotFound;
+    const after_disk = xml[pos..];
+
+    // Single-quoted attribute value
+    const needle_sq = "<source file='";
+    if (std.mem.indexOf(u8, after_disk, needle_sq)) |idx| {
+        const path_start = idx + needle_sq.len;
+        if (std.mem.indexOfScalarPos(u8, after_disk, path_start, '\'')) |path_end| {
+            return allocator.dupe(u8, after_disk[path_start..path_end]);
+        }
+    }
+
+    // Double-quoted attribute value
+    const needle_dq = "<source file=\"";
+    if (std.mem.indexOf(u8, after_disk, needle_dq)) |idx| {
+        const path_start = idx + needle_dq.len;
+        if (std.mem.indexOfScalarPos(u8, after_disk, path_start, '"')) |path_end| {
+            return allocator.dupe(u8, after_disk[path_start..path_end]);
+        }
+    }
+
+    return error.DiskPathNotFound;
+}
+
+pub fn forkVM(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    conn: *const libvirt.Connection,
+    cfg: *const config.Config,
+    source_name: []const u8,
+    dest_name: []const u8,
+    specs: VMSpecs,
+) !void {
+    if (dest_name.len == 0) return VMError.InvalidDomainName;
+
+    // Verify source VM exists
+    const src_dom = try conn.lookupDomain(allocator, source_name);
+    defer src_dom.free();
+
+    if (src_dom.isActive()) {
+        std.log.warn("Source domain '{s}' is running; forked disk may not be crash-consistent", .{source_name});
+    }
+
+    // Destination must not already exist
+    if (conn.lookupDomain(allocator, dest_name)) |_| {
+        return VMError.VMAlreadyExists;
+    } else |_| {}
+
+    const dst_disk = try std.fmt.allocPrint(allocator, "{s}/{s}.qcow2", .{ cfg.vm_storage_path, dest_name });
+    defer allocator.free(dst_disk);
+
+    // Read source persistent XML to find the original disk path (the fork point).
+    const src_xml = try src_dom.getXML(allocator);
+    defer allocator.free(src_xml);
+
+    const src_disk = try extractVdaDiskPath(allocator, src_xml);
+    defer allocator.free(src_disk);
+
+    // If the source VM is already running on a fork overlay (<name>-fork.qcow2), resolve
+    // back to the true base image (<name>.qcow2) so all forks share the same backing.
+    const fork_suffix = "-fork.qcow2";
+    const already_forked = std.mem.endsWith(u8, src_disk, fork_suffix);
+
+    const base_disk: []const u8 = blk: {
+        if (already_forked) {
+            const base_end = src_disk.len - fork_suffix.len;
+            break :blk try std.fmt.allocPrint(allocator, "{s}.qcow2", .{src_disk[0..base_end]});
+        }
+        break :blk try allocator.dupe(u8, src_disk);
+    };
+    defer allocator.free(base_disk);
+
+    if (src_dom.isActive() and !already_forked) {
+        // Source is running and has not been forked yet: pivot it to a source-owned
+        // continuation overlay so its QEMU process releases src_disk as the active
+        // (write-locked) file.  After the snapshot:
+        //   <name>-fork.qcow2  <- source's new active disk (write-locked by its QEMU)
+        //   <name>.qcow2       <- frozen fork point (read-only backing for all forks)
+        const src_cont = try std.fmt.allocPrint(allocator, "{s}/{s}-fork.qcow2", .{ cfg.vm_storage_path, source_name });
+        defer allocator.free(src_cont);
+
+        std.log.info("Creating external disk snapshot for '{s}' at {s}", .{ source_name, src_cont });
+        try src_dom.createExternalDiskSnapshot(allocator, "vda", src_cont);
+
+        // Update source's persistent config to reflect its new active disk path.
+        const updated_src_xml = try std.mem.replaceOwned(u8, allocator, src_xml, src_disk, src_cont);
+        defer allocator.free(updated_src_xml);
+        _ = libvirt.Domain.defineXML(conn, allocator, updated_src_xml) catch |err| {
+            std.log.warn("Could not update source VM config after snapshot: {}", .{err});
+        };
+    } else if (already_forked) {
+        std.log.info("Source '{s}' already has a fork overlay; using base image '{s}' for new VM", .{ source_name, base_disk });
+    }
+
+    // Create the dest disk as a fresh qcow2 overlay backed by base_disk.
+    // No running QEMU holds a write lock on dst_disk, so the forked VM can start cleanly.
+    const dst_vol_name = std.fs.path.basename(dst_disk);
+    std.log.info("Creating fork disk '{s}' with backing '{s}'", .{ dst_disk, base_disk });
+    try conn.createVolumeWithBacking(allocator, dst_vol_name, base_disk);
+
+    // Cloud-init ISO for the new VM name
+    const cloud_init_template = try std.fs.path.join(allocator, &.{ cfg.cloud_init_template_path, "cloud-init-user-data.yaml" });
+    defer allocator.free(cloud_init_template);
+
+    ensureCloudInitTemplate(io, allocator, cfg, cloud_init_template) catch |err| {
+        std.log.warn("Could not ensure cloud-init template: {}", .{err});
+    };
+
+    const cloud_init_iso = try std.fmt.allocPrint(allocator, "/tmp/{s}-cloud-init.iso", .{dest_name});
+    defer allocator.free(cloud_init_iso);
+
+    std.log.info("Creating cloud-init ISO at {s}", .{cloud_init_iso});
+    try cloudinit.createCloudInitISO(io, allocator, dest_name, cloud_init_template, cloud_init_iso);
+
+    const mac_addr = network.generateMACAddress(dest_name);
+
+    const xml = try generateDomainXML(allocator, dest_name, dst_disk, cloud_init_iso, mac_addr, specs);
+    defer allocator.free(xml);
+
+    std.log.info("Defining domain '{s}'", .{dest_name});
+    const dom = try libvirt.Domain.defineXML(conn, allocator, xml);
+    defer dom.free();
+
+    if (specs.start) {
+        std.log.info("Starting domain '{s}'", .{dest_name});
+        try dom.create();
+        std.log.info("Domain '{s}' forked and started", .{dest_name});
+
+        if (specs.wait_for_ip) {
+            const ip = network.getIPAddress(&dom, allocator, &mac_addr, cfg.max_retries) catch |err| {
+                std.log.warn("Could not retrieve IP address: {}", .{err});
+                return;
+            };
+            defer allocator.free(ip);
+            std.log.info("VM IP address: {s}", .{ip});
+
+            ssh_conf.createSshHostConfig(io, allocator, .{
+                .host = dest_name,
+                .hostname = ip,
+                .user = cfg.username,
+                .identity_file = cfg.identity_file,
+            }) catch |err| {
+                std.log.warn("Could not create SSH config: {}", .{err});
+            };
+        }
+    } else {
+        std.log.info("Domain '{s}' forked but not started", .{dest_name});
+    }
+}
+
 fn ensureCloudInitTemplate(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -444,7 +627,6 @@ fn generateDomainXML(
         \\    <disk type='file' device='disk'>
         \\      <driver name='qemu' type='qcow2'/>
         \\      <source file='{s}'/>
-        \\      <backingStore/>
         \\      <target dev='vda' bus='virtio'/>
         \\      <address type='pci' domain='0x0000' bus='0x04' slot='0x00' function='0x0'/>
         \\    </disk>

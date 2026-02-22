@@ -21,6 +21,7 @@ pub const LibvirtError = error{
     SnapshotListFailed,
     VolumeLookupFailed,
     VolumeResizeFailed,
+    VolumeCreateFailed,
     PoolCreateFailed,
 };
 
@@ -147,6 +148,50 @@ pub const Connection = struct {
         }
     }
 
+    /// Creates a new qcow2 volume in the 'zm' pool backed by `backing_path`.
+    /// The created file will be at `{pool_target}/{vol_name}`.
+    pub fn createVolumeWithBacking(
+        self: *const Connection,
+        allocator: std.mem.Allocator,
+        vol_name: []const u8,
+        backing_path: []const u8,
+    ) !void {
+        const pool = try self.ensurePool();
+        defer _ = c.virStoragePoolFree(pool);
+        _ = c.virStoragePoolRefresh(pool, 0);
+
+        const escaped_name = try xmlEscape(allocator, vol_name);
+        defer allocator.free(escaped_name);
+        const escaped_backing = try xmlEscape(allocator, backing_path);
+        defer allocator.free(escaped_backing);
+
+        const vol_xml = try std.fmt.allocPrint(allocator,
+            \\<volume>
+            \\  <name>{s}</name>
+            \\  <allocation>0</allocation>
+            \\  <target>
+            \\    <format type='qcow2'/>
+            \\  </target>
+            \\  <backingStore>
+            \\    <path>{s}</path>
+            \\    <format type='qcow2'/>
+            \\  </backingStore>
+            \\</volume>
+        , .{ escaped_name, escaped_backing });
+        defer allocator.free(vol_xml);
+
+        const c_xml = try allocator.dupeZ(u8, vol_xml);
+        defer allocator.free(c_xml);
+
+        const vol = c.virStorageVolCreateXML(pool, c_xml, 0) orelse {
+            if (c.virGetLastError()) |err| {
+                std.log.err("Failed to create volume: {s}", .{err.*.message});
+            }
+            return LibvirtError.VolumeCreateFailed;
+        };
+        _ = c.virStorageVolFree(vol);
+    }
+
     pub fn lookupDomain(self: *const Connection, allocator: std.mem.Allocator, name: []const u8) !Domain {
         const c_name = try std.fmt.allocPrint(std.heap.page_allocator, "{s}", .{name});
         defer std.heap.page_allocator.free(c_name);
@@ -159,6 +204,60 @@ pub const Connection = struct {
         };
 
         return Domain{ .dom = dom };
+    }
+
+    pub fn lookUpPool(self: *const Connection, allocator: std.mem.Allocator, name: []const u8) !Pool {
+        const c_name = try allocator.dupeZ(u8, name);
+        defer allocator.free(c_name);
+
+        const pool = c.virStoragePoolLookupByName(self.conn, c_name) orelse {
+            return LibvirtError.NetworkLookupFailed;
+        };
+
+        return .{ .pool = pool };
+    }
+};
+
+pub const Pool = struct {
+    pool: *c.virStoragePool,
+
+    pub fn free(self: Pool) void {
+        _ = c.virStoragePoolFree(self.pool);
+    }
+
+    pub fn getVolumes(self: *const Pool, allocator: std.mem.Allocator) ![][]const u8 {
+        const num = c.virStoragePoolNumOfVolumes(self.pool);
+        if (num < 0) return LibvirtError.VolumeLookupFailed;
+        if (num == 0) return allocator.alloc([]const u8, 0);
+
+        const max_names: usize = @intCast(num);
+        const names = try allocator.alloc([*c]u8, max_names);
+        defer allocator.free(names);
+
+        const n = c.virStoragePoolListVolumes(self.pool, @ptrCast(names.ptr), @intCast(max_names));
+        if (n < 0) return LibvirtError.VolumeLookupFailed;
+
+        const count: usize = @intCast(n);
+        const c_names = names[0..count];
+        defer for (c_names) |name_ptr| {
+            c.free(name_ptr);
+        };
+
+        var result: std.ArrayList([]const u8) = .empty;
+        errdefer {
+            for (result.items) |name| allocator.free(name);
+            result.deinit(allocator);
+        }
+
+        for (c_names) |name_ptr| {
+            const name_copy = try allocator.dupe(u8, mem.span(name_ptr));
+            result.append(allocator, name_copy) catch |err| {
+                allocator.free(name_copy);
+                return err;
+            };
+        }
+
+        return result.toOwnedSlice(allocator);
     }
 };
 
@@ -183,7 +282,11 @@ pub const Domain = struct {
 
     pub fn create(self: *const Domain) !void {
         if (c.virDomainCreate(self.dom) < 0) {
-            std.log.err("Failed to start domain", .{});
+            if (c.virGetLastError()) |err| {
+                std.log.err("Failed to start domain: {s}", .{err.*.message});
+            } else {
+                std.log.err("Failed to start domain", .{});
+            }
             return LibvirtError.DomainStartFailed;
         }
     }
@@ -342,6 +445,59 @@ pub const Domain = struct {
     //     }
     //     return @as(c.virDomainState, @enumFromInt(state));
     // }
+
+    /// Returns the domain's persistent (inactive) XML description.
+    /// Caller owns the returned slice.
+    pub fn getXML(self: *const Domain, allocator: std.mem.Allocator) ![]const u8 {
+        const raw = c.virDomainGetXMLDesc(self.dom, c.VIR_DOMAIN_XML_INACTIVE) orelse {
+            return LibvirtError.DomainLookupFailed;
+        };
+        defer c.free(raw);
+        return allocator.dupe(u8, mem.span(raw));
+    }
+
+    /// Creates an external, disk-only snapshot at `snapshot_path` for disk `disk_device`
+    /// (e.g. "vda").  Uses DISK_ONLY | ATOMIC | NO_METADATA so libvirt does not
+    /// track it as a named snapshot.  The snapshot file becomes the new active
+    /// overlay for the domain; the original disk becomes the read-only backing store.
+    pub fn createExternalDiskSnapshot(
+        self: *const Domain,
+        allocator: std.mem.Allocator,
+        disk_device: []const u8,
+        snapshot_path: []const u8,
+    ) !void {
+        const escaped_disk = try xmlEscape(allocator, disk_device);
+        defer allocator.free(escaped_disk);
+        const escaped_path = try xmlEscape(allocator, snapshot_path);
+        defer allocator.free(escaped_path);
+
+        const xml = try std.fmt.allocPrint(allocator,
+            \\<domainsnapshot>
+            \\  <disks>
+            \\    <disk name='{s}' snapshot='external'>
+            \\      <source file='{s}'/>
+            \\    </disk>
+            \\  </disks>
+            \\</domainsnapshot>
+        , .{ escaped_disk, escaped_path });
+        defer allocator.free(xml);
+
+        const c_xml = try allocator.dupeZ(u8, xml);
+        defer allocator.free(c_xml);
+
+        const flags: c_uint = c.VIR_DOMAIN_SNAPSHOT_CREATE_DISK_ONLY |
+            c.VIR_DOMAIN_SNAPSHOT_CREATE_ATOMIC |
+            c.VIR_DOMAIN_SNAPSHOT_CREATE_NO_METADATA;
+
+        const snap = c.virDomainSnapshotCreateXML(self.dom, c_xml, flags) orelse {
+            const err = c.virGetLastError();
+            if (err != null) {
+                std.log.err("External snapshot failed: {s}", .{err.*.message});
+            }
+            return LibvirtError.SnapshotCreateFailed;
+        };
+        _ = c.virDomainSnapshotFree(snap);
+    }
 };
 
 pub const Snapshot = struct {
