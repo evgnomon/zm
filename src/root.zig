@@ -12,7 +12,7 @@ pub const network = @import("network.zig");
 pub const ssh_conf = @import("ssh_conf.zig");
 
 // Version information
-pub const version = "0.2.0";
+pub const version = "0.7.0";
 
 // Re-export commonly used types and functions
 pub const Config = config.Config;

@@ -3,7 +3,7 @@ const config = @import("config.zig");
 const vm = @import("vm.zig");
 const libvirt = @import("libvirt.zig");
 
-const version = "0.2.0";
+const version = "0.7.0";
 
 pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
