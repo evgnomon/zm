@@ -5,12 +5,12 @@ ENV_FILE := .env
 
 -include $(ENV_FILE)
 
-.PHONY: install clean uninstall build all
+.PHONY: install clean uninstall build all dist
 
 .env:
 	@touch .env
 
-all: build
+all: dist
 
 build: $(OUTPUT)
 
@@ -20,6 +20,12 @@ $(OUTPUT): $(SOURCES) $(ENV_FILE)
 
 install: build
 	@cp $(OUTPUT) /usr/bin/zm
+
+dist: build
+	@mkdeb
+
+publish:
+	@pubdeb
 
 uninstall:
 	@rm /usr/bin/zm

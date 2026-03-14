@@ -43,7 +43,7 @@ pub fn createVM(
         return VMError.VMAlreadyExists;
     } else |_| {}
 
-    const src_image = specs.image_path orelse try std.fs.path.join(allocator, &.{ cfg.base_image_path, "zamin" });
+    const src_image = specs.image_path orelse try std.fs.path.join(allocator, &.{ cfg.base_image_path, cfg.image_name });
     defer if (specs.image_path == null) allocator.free(src_image);
 
     const dst_image = try std.fmt.allocPrint(allocator, "{s}/{s}.qcow2", .{ cfg.vm_storage_path, domain_name });
