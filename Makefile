@@ -24,7 +24,7 @@ install: build
 dist: build
 	@mkdeb
 
-publish:
+publish: dist
 	@pubdeb
 
 uninstall:
